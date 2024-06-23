@@ -1,0 +1,91 @@
+@startuml
+
+title Game Initialization
+
+actor User as u
+actor "User[N]" as u2
+participant "Telegram Bot" as tb
+participant GameInitializer as gi
+participant RoomManager as rm
+database Mongo as db
+participant GameManager as gm
+
+u -> tb: new-game
+tb -> gi: get game-config-to-fill
+gi -> gm: get game-config-to-fill
+note left gm
+{
+    participantCounts,
+    roundTime
+}
+end note
+gm --> gi
+note left gi
+{
+    participantCounts,
+    roundTime
+}
+end note
+gi --> tb: game-config-to-fill
+tb --> u: ask to fill fields
+
+u -> tb: fill fields
+tb -> gi: start new-game
+note right tb
+{
+    participantCounts: 4,
+    roundTime: 5M
+}
+end note
+gi -> rm: create new-room
+note right gi
+{
+    capacity: 4,
+    participants: ['12acbe4a-ebfe-49ef-b587-4c1059bf9ffa']
+}
+end note
+note left rm
+{
+    id: 73c5e022-c1b2-4f5d-b4c2-9be5dc63efd5
+}
+end note
+rm --> gi
+gi -> gi: generate share-code
+gi -> db: save new init context
+db --> gi
+
+gi --> tb: share-code
+
+tb --> u: ask to share share-code with other participants
+
+u2 -> tb: join game by share-code
+tb -> gi: add participant
+gi -> rm: add participant
+rm --> gi
+gi --> tb:
+alt Participants enough
+
+    note left tb
+    {
+        joinStatus: true,
+        gameReady: true
+    }
+    end note
+
+else Participants not enough
+    note left tb
+    {
+        joinStatus: true,
+        gameReady: false
+    }
+    end note
+end
+    tb --> u2: user joined successfully
+    tb --> u: user joined successfully
+alt "Game is ready"
+    tb --> u: game is ready
+    u -> tb: start game
+    tb -> gi: start game
+    gi -> gm: new game
+end
+@enduml
