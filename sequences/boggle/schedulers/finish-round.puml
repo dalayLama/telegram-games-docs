@@ -1,0 +1,103 @@
+@startuml
+
+actor "Scheduler" as a #LightYellow
+control FinishRoundJob as job #LightGray
+participant "GameService" as service #LightGray
+participant "GameDAO" as dao #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+
+a -> job: execute job
+note right a
+{
+    UUID gameId,
+    int round
+}
+end note
+activate job
+
+job -> service: finishRound(gameId, round)
+activate service
+
+service -> dao: findById(gameId, round)
+activate dao
+dao --> service: return GameEntity
+deactivate dao
+
+alt #LightCoral Game not found
+    service --> job: GameNotFoundException
+    job --> a: GameNotFoundException
+end
+
+service -> service: find round by number
+
+alt #LightCoral Game Round not found
+    service --> job: GameRoundNotFoundException
+    job --> a: GameRoundNotFoundException
+end
+
+service -> service: check if round is not active
+alt #LightCoral Round is not active
+    service --> job: GameRoundNotActiveException
+    job --> a: GameRoundNotActiveException
+end
+
+service -> service: set roundState FINISHED
+
+service -> dao: save(gameRound)
+activate dao
+dao --> service: return gameRound
+deactivate dao
+
+par #AliceBlue
+    service -> kafkaProducer: /games-topic
+    note right service
+    messageKey: GAME_ROUND_FINISHED
+    GameRoundDto
+    {
+        UUID gameId,
+        int number,
+        List<List<Char> charsMatrix,
+        Set<UUID> participants,
+        RoundState state[FINISHED],
+        Duration duration,
+        Instant createdAt,
+        Instant startedAt,
+        Instant finishedAt
+    }
+    end note
+end
+
+service -> service: check if the round is last
+opt The round is last
+    service -> service: set the game state FINISHED
+    service -> dao: save(game)
+    activate dao
+    dao --> service: return game
+    deactivate dao
+    par #AliceBlue
+            service -> kafkaProducer: /games-topic
+            note right service
+            messageKey: GAME_FINISHED
+            GameDto
+            {
+                UUID id,
+                UUID owner,
+                UUID roomId,
+                Locale locale,
+                int rounds,
+                String state[FINISHED],
+                Instant createdAt,
+                Instant startedAt,
+                Instant finishedAt
+            }
+            end note
+        end
+end
+
+service --> job
+deactivate service
+
+job --> a
+deactivate job
+
+@enduml

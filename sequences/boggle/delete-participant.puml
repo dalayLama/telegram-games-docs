@@ -1,0 +1,75 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "GameController" as controller #LightGray
+participant "GameService" as service #LightGray
+participant "GameDAO" as dao #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+
+a -> controller: DELETE /games/{gameId}/participant/{participantId}
+note right a
+Request Header:
+    "Authorization": "Bearer {token}"
+Path variables:
+    "gameId" - UUID
+    "participantId" - UUID
+end note
+activate controller
+
+controller -> service: deleteParticipant(gameId, participantId)
+activate service
+service -> dao: findById(gameId)
+activate dao
+dao --> service: return GameEntity
+
+alt #LightCoral Game not found
+    service --> controller: GameNotFoundException
+    controller --> a
+    note left controller
+    Http status: 404
+    {
+        "errorCode": "GAME_NOT_FOUND",
+        "errorMessage": "Game hasn't been found by id - {:id}"
+    }
+    end note
+end
+
+service -> service: find rounds contain the participant and with state [ACTIVE, WAIT]
+alt #LightCoral The participant not found in the rest of rounds
+    service --> controller: ParticipantNotFoundException
+    controller --> a
+    note left controller
+    Http status: 404
+    Response body:
+    {
+        "errorCode": "PARTICIPANT_NOT_FOUND",
+        "errorMessage": "Participant :participantId hasn't been found in the game :gameId"
+    }
+    end note
+end
+
+service -> service: delete participant from found rounds
+service -> dao: save(GameEntity)
+activate dao
+dao --> service: return GameEntity
+deactivate dao
+
+par #AliceBlue
+    service -> kafkaProducer: /games-topic
+    note right service
+    messageKey: PARTICIPANT_DELETED
+    ParticipantDeletedDto
+    {
+        UUID gameId,
+        UUID participantId
+    }
+    end note
+end
+
+service --> controller
+controller --> a
+note left controller
+Http status: 200
+end note
+
+@enduml

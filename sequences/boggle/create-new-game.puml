@@ -1,0 +1,195 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "GameController" as controller #LightGray
+participant "GameService" as gameService #LightGray
+boundary "RoomManager" as roomManager #LightGray
+participant "GameValidator" as gameValidator #LightGray
+participant "RoundGenerator" as roundGenerator #LightGray
+participant "GameDAO" as gameDao #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+queue "Kafka-Listener" as kafkaListener #LightPink
+
+a -> controller: POST /games
+note right a
+Http headers:
+    "Authorization: Bearer {token}"
+Request body:
+    {
+        @NotNull UUID roomId,
+        @Min(1) @Max(10) int rounds,
+        @Min(5) @Max(10) int matrixSize,
+        @NotNull Locale locale,
+        @NotNull @Min(1M) @Max(5M) Duration roundDuration
+    }
+end note
+activate controller
+
+controller -> gameService: newGame(newGameRequest)
+note right controller
+NewGameRequest
+{
+    UUID ownerId,
+    @NotNull UUID roomId,
+    @Min(1) @Max(10) int rounds,
+    @Min(5) @Max(10) int matrixSize,
+    @NotNull Locale locale,
+    @NotNull @Min(1M) @Max(5M) Duration roundDuration
+}
+end note
+activate gameService
+
+gameService -> roomManager: GET /rooms/{roomId}/participants
+activate roomManager
+note left roomManager
+["ca195b9a-e291-4e9c-aaff-ccbe4b092454", ...]
+end note
+roomManager --> gameService: Set<UUID>
+deactivate roomManager
+
+gameService -> gameValidator: valid(newGameRequest, participants)
+activate gameValidator
+gameValidator -> gameValidator: check participants count > 1
+alt #LightCoral count <= 1
+    gameValidator --> gameService: NotEnoughParticipantsException
+    gameService --> controller: NotEnoughParticipantsException
+    note left controller
+    Http status: 400
+    Response body:
+    {
+        errorCode: "NOT_ENOUGH_PARTICIPANTS",
+        "errorMessage": "Not enough participants in game(:gameId), min count - 2"
+    }
+    end note
+    controller --> a
+end
+gameValidator --> gameService
+deactivate gameValidator
+
+gameService -> roundGenerator: generate(rounds, newRoundRequest)
+note right gameService
+NewRoundRequest
+{
+    Set<UUID> participants,
+    int matrixSize,
+    Local locale,
+    Duration duration
+}
+end note
+activate roundGenerator
+note left roundGenerator
+[
+    {
+        int round,
+        List<List<Char> charsMatrix
+        Set<UUID> participants,
+        Duration duration
+    }
+]
+end note
+roundGenerator --> gameService: List<GameRound>
+deactivate roundGenerator
+
+gameService -> gameService: create GameEntity
+note right gameService
+GameEntity
+{
+    UUID id,
+    UUID ownerId,
+    UUID roomId,
+    Locale locale,
+    List<GameRoundEntity> rounds,
+    GameState state[WAIT],
+    Instant createdAt,
+    Instant startedAt,
+    Instant finishedAt
+}
+GameRoundEntity
+{
+    UUID gameId,
+    int number,
+    List<List<Char> charsMatrix,
+    Set<RoundParticipantEntity> participants,
+    GameState state[WAIT],
+    Duration duration,
+    Instant createdAt,
+    Instant startedAt,
+    Instant finishedAt
+}
+RoundParticipantEntity
+{
+    UUID gameId,
+    int number,
+    UUID participantId,
+    Set<RoundAnswerEntity> answers
+}
+RoundAnswerEntity
+{
+    Long id,
+    UUID gameId,
+    int roundNumber,
+    UUID participantId,
+    String answer,
+    Instant receivedAt,
+}
+end note
+
+gameService -> gameDao: save(gameEntity)
+activate gameDao
+gameDao --> gameService: return gameEntity
+deactivate gameDao
+
+par #AliceBlue
+    gameService -> kafkaProducer: /games-topic
+    note right gameService
+        messageKey: GAME_CREATED
+        GameDto
+        {
+            UUID id,
+            UUID owner,
+            UUID roomId,
+            Locale locale,
+            int rounds,
+            GameState state[WAIT],
+            Instant createdAt,
+            Instant startedAt,
+            Instant finishedAt
+        }
+    end note
+end
+
+note left gameService
+Game
+{
+    UUID id,
+    UUID ownerId,
+    UUID roomId,
+    Locale locale,
+    GameState state[WAIT],
+    Instant createdAt,
+    Instant startedAt,
+    Instant finishedAt
+}
+end note
+gameService --> controller: Game
+deactivate gameService
+
+note left controller
+Http status: 201
+GameDto
+{
+    UUID id,
+    UUID owner,
+    UUID roomId,
+    Locale locale,
+    int rounds,
+    GameState state[WAIT],
+    Instant createdAt,
+    Instant startedAt,
+    Instant finishedAt
+}
+end note
+controller --> a: GameDto
+deactivate controller
+
+@enduml

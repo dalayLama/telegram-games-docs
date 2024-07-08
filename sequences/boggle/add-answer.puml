@@ -1,0 +1,95 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "GameController" as controller #LightGray
+participant "GameService" as service #LightGray
+participant "GameDAO" as dao #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+queue "Kafka-Listener" as kafkaListener #LightPink
+
+a -> controller: POST /games/{id}/rounds/{roundNumber}/answers
+note right a
+Http headers:
+    "Authorization: Bearer {token}"
+Path variables:
+    id - UUID
+    roundNumber - int
+Request body:
+    {
+        String answer
+    }
+end note
+activate controller
+
+controller -> service: addAnswer(roundAnswerRequest)
+note right controller
+RoundAnswerRequest
+{
+    UUID gameId,
+    int round,
+    UUID participantId,
+    String answer
+}
+end note
+activate service
+
+service -> dao: findParticipantById(gameId, round, participantId)
+activate dao
+dao --> service: return RoundParticipantEntity
+deactivate dao
+
+alt #LightCoral ParticipantRound not found
+    service --> controller: ParticipantRoundNotFoundException
+    note left controller
+    Http status: 404
+    {
+        errorCode: "PARTICIPANT_ROUND_NOT_FOUND",
+        errorMessage: "Participant hasn't been found by id :participantId in the round {:round} of the gameId {:gameId}"
+    }
+    end note
+    controller --> a
+end
+
+service -> service: check if the actor is the participant
+alt #LightCoral The actor is not the participant
+    service --> controller: ForbiddenOperationException
+    controller --> a
+    note left controller
+    Http status: 403
+    {
+        errorCode: "FORBIDDEN_OPERATION",
+        errorMessage: "The user doesn't have permission to process the operation"
+    }
+    end note
+end
+
+service -> service: check if round is not active
+alt #LightCoral Round is not active
+    service --> controller: GameRoundNotActiveException
+    controller --> a
+    note left controller
+    Http status: 400
+    {
+        errorCode: "GAME_ROUND_NOT_ACTIVE",
+        errorMessage: "Game round {:round} in the game {:gameId} is not active - {:roundState}"
+    }
+    end note
+end
+
+service -> service: add answer
+
+service -> dao: save(gameRoundEntity)
+activate dao
+dao --> service: return GameRoundEntity
+deactivate dao
+
+service --> controller
+deactivate service
+
+note left controller
+Http status: 200
+end note
+controller --> a
+deactivate controller
+
+@enduml

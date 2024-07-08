@@ -1,0 +1,59 @@
+@startuml
+
+actor "Kafka-Listener" as a #LightYellow
+participant "MessageHandler" as handler #LightGray
+participant "GameService" as service #LightGray
+participant "GameDAO" as dao #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+
+a -> handler: /rooms-topic
+note right a
+messageKey: PARTICIPANT_DELETED
+DeletedParticipantDTO
+{
+    UUID roomId,
+    UUID participantId
+}
+end note
+activate handler
+
+
+handler -> service: deleteParticipantByRoomId(roomId, participantId)
+activate service
+service -> dao: findGamesByRoomId(roomId)
+activate dao
+dao --> service: return List<Game>
+
+service -> service: check list is not empty
+
+opt #AliceBlue Games not found in the room
+    service --> handler
+    handler --> a
+end
+
+loop forEach Game
+    service -> service: find participant in rounds with state[ACTIVE, WAIT]
+    service -> service: delete participant from found rounds
+    service -> dao: save(GameEntity)
+    activate dao
+    dao --> service: return GameEntity
+    deactivate dao
+
+    par #AliceBlue
+        service -> kafkaProducer: /games-topic
+        note right service
+        messageKey: PARTICIPANT_DELETED
+        ParticipantDeletedDto
+        {
+            UUID gameId,
+            UUID participantId
+        }
+        end note
+    end
+end
+
+service --> handler
+deactivate service
+deactivate handler
+
+@enduml

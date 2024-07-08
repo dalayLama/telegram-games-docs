@@ -1,0 +1,199 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "GameController" as controller #LightGray
+participant "GameService" as service #LightGray
+participant "GameDAO" as dao #LightGray
+participant "GameValidator" as validator #LightGray
+boundary "Scheduler" as scheduler #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+
+a -> controller: POST /games/{id}/next-round
+note right a
+Http headers:
+    "Authorization: Bearer {token}"
+end note
+activate controller
+
+controller -> service: newRound(gameId)
+activate service
+
+service -> dao: findById(gameId)
+activate dao
+dao --> service: return GameEntity
+deactivate dao
+
+alt #LightCoral Game not found
+    service --> controller: GameNotFoundException
+    note left controller
+    Http status: 404
+    {
+        errorCode: "GAME_NOT_FOUND",
+        errorMessage: "Game hasn't been found by id - {:id}"
+    }
+    end note
+    controller --> a
+end
+
+service -> service: check the actor is the owner of the game
+alt #LightCoral The actor is not the owner of the game
+    service --> controller: ForbiddenOperationException
+    controller --> a
+    note left controller
+    Http status: 403
+    {
+        errorCode: "FORBIDDEN_OPERATION",
+        errorMessage: "The user doesn't have permission to process the operation"
+    }
+    end note
+end
+
+service -> service: check game is finished
+alt #LightCoral Game is already finished
+    service --> controller: GameAlreadyFinishedException
+    note left controller
+    Http status: 400
+    {
+        errorCode: "GAME_ALREADY_FINISHED",
+        errorMessage: "Game with id {:id} is already finished"
+    }
+    end note
+    controller --> a
+end
+
+service -> service: check the game has an active round
+alt #LightCoral Game has active round
+service --> controller: GameAlreadyHasActiveRoundException
+note left controller
+Http status: 400
+Response body:
+{
+    "errorCode": "GAME_ALREADY_HAS_ACTIVE_ROUND",
+    "errorMessage": "Game {:id} already has an active round {:roundNumber}"
+}
+end note
+controller --> a
+end
+
+opt #AliceBlue Game is not active
+    service -> service: set gameState to ACTIVE
+end
+
+service -> service: get first round with state WAIT
+alt #LightCoral GameRound with state WAIT not found
+    service --> controller: AppropriateGameRoundNotFoundException
+    note left controller
+    Http status: 500
+    {
+        "errorCode": "APPROPRIATE_GAME_ROUND_NOT_FOUND",
+        "errorMessage": "Appropriate game round hasn't been found"
+    }
+    end note
+    controller --> a
+end
+
+service -> validator: validRound(round)
+activate validator
+validator -> validator: check participants count > 1
+alt #LightCoral count <= 1
+    validator --> service: NotEnoughParticipantsException
+    service --> controller: NotEnoughParticipantsException
+    note left controller
+    Http status: 400
+    Response body:
+    {
+        errorCode: "NOT_ENOUGH_PARTICIPANTS",
+        "errorMessage": "Not enough participants in game(:gameId), min count - 2"
+    }
+    end note
+    controller --> a
+else #White count > 1
+    validator --> service
+    deactivate validator
+end
+
+
+service -> service: set roundState to ACTIVE
+
+service -> dao: save(gameEntity)
+activate dao
+dao --> service: return gameEntity
+deactivate dao
+
+opt #AliceBlue Game state was changed to ACTIVE
+    par #AliceBlue
+        service -> kafkaProducer: /games-topic
+        note right service
+        messageKey: GAME_STARTED
+        GameDto
+        {
+            UUID id,
+            UUID owner,
+            UUID roomId,
+            Locale locale,
+            int rounds,
+            String state[ACTIVE],
+            Instant createdAt,
+            Instant startedAt,
+            Instant finishedAt
+        }
+        end note
+    end
+end
+par #AliceBlue
+    service -> kafkaProducer: /games-topic
+    note right service
+    messageKey: GAME_ROUND_STARTED
+    GameRoundDto
+    {
+        UUID gameId,
+        int number,
+        List<List<Char> charsMatrix,
+        Set<UUID> participants,
+        String state[ACTIVE],
+        Duration duration,
+        Instant createdAt,
+        Instant startedAt,
+        Instant finishedAt
+    }
+    end note
+end
+
+service -> scheduler: newJob(startAt, finishRoundJob)
+
+note left service
+GameRound
+{
+    UUID gameId,
+    int number,
+    List<List<Char> charsMatrix,
+    Set<UUID> participants,
+    RoundState state[ACTIVE],
+    Duration duration,
+    Instant createdAt,
+    Instant startedAt,
+    Instant finishedAt
+}
+end note
+service --> controller: Game
+deactivate service
+
+note left controller
+Http status: 200
+GameRoundDto
+{
+    UUID gameId,
+    int number,
+    List<List<Char> charsMatrix,
+    Set<UUID> participants,
+    String state[ACTIVE],
+    Duration duration,
+    Instant createdAt,
+    Instant startedAt,
+    Instant finishedAt
+}
+end note
+controller --> a: GameDto
+deactivate controller
+
+@enduml
