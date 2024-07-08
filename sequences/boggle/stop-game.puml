@@ -1,0 +1,88 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "Controller" as controller #LightGray
+participant "GameService" as service #LightGray
+participant "GameDAO" as dao #LightGray
+queue "Kafka-Producer" as kafkaProducer #LightPink
+
+a -> controller: POST /games/{id}/stop
+note right a
+Request headers:
+    "Authorization": "Bearer {token}"
+Path variables:
+    id - UUID
+end note
+activate controller
+
+controller -> service: stopGame(id)
+activate service
+service -> dao: findGameById(id)
+activate dao
+dao --> service: return GameEntity
+
+alt #LightCoral Game not found
+    service --> controller: GameNotFoundException
+    controller --> a
+    note left controller
+    Http status: 404
+    Response body:
+    {
+        "errorCode": "GAME_NOT_FOUND",
+        "errorMessage": "Game hasn't been found by id - :id"
+    }
+    end note
+end
+
+service -> service: check the actor is the owner of the game
+alt #LightCoral The actor is not the owner of the game
+    service --> controller: ForbiddenOperationException
+    controller --> a
+    note left controller
+    Http status: 403
+    {
+        errorCode: "FORBIDDEN_OPERATION",
+        errorMessage: "The user doesn't have permission to process the operation"
+    }
+    end note
+end
+
+service -> service: set gameState = STOPPED
+service -> service: find rounds with state [ACTIVE, WAIT]
+service -> service: set roundState = STOPPED for found rounds
+service -> dao: save(GameEntity)
+activate dao
+dao --> service: return GameEntity
+deactivate dao
+
+par #AliceBlue
+    service -> kafkaProducer: /games-topic
+    note right service
+    messageKey: GAME_ROUND_STOPPED
+    GameRoundStoppedDto
+    {
+        UUID gameId,
+        int round
+    }
+    end note
+end
+par #AliceBlue
+    service -> kafkaProducer: /games-topic
+    note right service
+    messageKey: GAME_STOPPED
+    GameStoppedDto
+    {
+        UUID gameId
+    }
+    end note
+end
+
+service --> controller
+deactivate service
+controller --> a
+note left controller
+Http status: 200
+end note
+deactivate controller
+
+@enduml
