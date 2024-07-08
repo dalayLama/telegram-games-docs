@@ -1,0 +1,53 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "RoomController" as controller #LightGray
+participant "RoomService" as roomService #LightGray
+participant "RoomDAO" as roomDao #LightGray
+
+a -> controller: GET /rooms/{roomId}/participants
+note right a
+Request Header:
+    "Authorization": "Bearer {token}"
+Path variables:
+    "roomId" - UUID
+end note
+activate controller
+
+controller -> roomService: getParticipants(roomId)
+note right controller
+end note
+activate roomService
+
+roomService -> roomDao: findById(roomId)
+activate roomDao
+
+roomDao --> roomService: return Room
+deactivate roomDao
+
+alt #LightCoral Room not found
+    roomService --> controller: RoomNotFoundException
+    controller --> a
+    note left controller
+    Http status: 404
+    {
+        errorCode: "ROOM_NOT_FOUND",
+        errorMessage: "Room hasn't been found by id - {:id}"
+    }
+    end note
+end
+
+roomService --> controller: Set<UUID>
+note left roomService
+[4e8c71b7-f55d-4b54-85fb-8c0bac7e987c, ...]
+end note
+deactivate roomService
+
+controller --> a: Set<UUID>
+note left controller
+Http status: 200
+[4e8c71b7-f55d-4b54-85fb-8c0bac7e987c, ...]
+end note
+deactivate controller
+
+@enduml

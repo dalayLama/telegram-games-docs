@@ -1,0 +1,104 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "RoomController" as controller #LightGray
+participant "RoomService" as roomService #LightGray
+participant "RoomDAO" as roomDao #LightGray
+queue Kafka as kafka #LightPink
+
+a -> controller: PUT /rooms/{roomId}/participants
+note right a
+Request Header:
+    "Authorization": "Bearer {token}"
+Path variables:
+    "roomId" - UUID
+Request body:
+    {
+        @NotNull UUID participantId,
+        @Nullable @Size(4) String roomCode
+    }
+end note
+activate controller
+
+controller -> roomService: addParticipant(roomId, newParticipantRequest)
+note right controller
+roomId  - UUID
+NewParticipantRequest
+{
+    @NotNull UUID participantId,
+    @Nullable @Size(4) String roomCode
+}
+end note
+activate roomService
+
+roomService -> roomDao: findById
+activate roomDao
+
+roomDao --> roomService: return Room
+deactivate roomDao
+
+alt #LightCoral Room not found
+    roomService --> controller: RoomNotFoundException
+    controller --> a
+    note left controller
+    Http status: 404
+    {
+        errorCode: "ROOM_NOT_FOUND",
+        errorMessage: "Room hasn't been found by id - {:id}"
+    }
+    end note
+end
+
+roomService -> roomService: check participant is included
+
+alt #LightGray participant is already included
+    roomService --> controller
+    controller --> a
+    note left controller
+    Http status: 200
+    end note
+end
+
+roomService -> roomService: check roomCode
+
+alt #LightCoral roomCode is invalid
+    roomService --> controller: RoomCodeInvalidException
+    controller --> a
+    note left controller
+    Http status: 403
+    Response body:
+    {
+        errorCode: "ROOM_CODE_IS_INVALID",
+        errorMessage: "Room code is invalid"
+    }
+    end note
+else #White roomCode is valid or room without code
+    roomService -> roomService: add participant
+    roomService -> roomDao: save(Room)
+    activate roomDao
+    roomDao --> roomService
+    deactivate roomDao
+
+    par #LightBlue
+        roomService -> kafka: /rooms-topic
+        note right roomService
+            messageKey: PARTICIPANT_ADDED
+            AddedRoomParticipantDTO
+            {
+                UUID roomId,
+                UUID participantId
+            }
+        end note
+    end
+end
+
+roomService --> controller
+deactivate roomService
+
+controller --> a
+note left controller
+Http status: 200
+end note
+deactivate controller
+
+@enduml

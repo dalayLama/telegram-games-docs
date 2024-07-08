@@ -1,0 +1,82 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "RoomController" as controller #LightGray
+participant "RoomService" as roomService #LightGray
+participant "RoomDAO" as roomDao #LightGray
+queue Kafka as kafka #LightPink
+
+a -> controller: DELETE /rooms/{roomId}
+note right a
+Request Header:
+    "Authorization": "Bearer {token}"
+Path variables:
+    "roomId" - UUID
+end note
+activate controller
+
+controller -> roomService: deleteRoom(roomId)
+note right controller
+end note
+activate roomService
+
+roomService -> roomDao: findById(roomId)
+activate roomDao
+
+roomDao --> roomService: return Room
+deactivate roomDao
+
+alt #LightCoral Room not found
+    roomService --> controller: RoomNotFoundException
+    controller --> a
+    note left controller
+    Http status: 404
+    {
+        errorCode: "ROOM_NOT_FOUND",
+        errorMessage: "Room hasn't been found by id - {:id}"
+    }
+    end note
+end
+
+roomService -> roomService: check the Actor is the room owner
+
+alt #LightCoral the Actor is not the owner
+    roomService --> controller: ForbiddenOperationException
+    controller --> a
+    note left controller
+    Http status: 403
+    {
+        errorCode: "FORBIDDEN_OPERATION",
+        errorMessage: "Only owner can delete the room"
+    }
+    end note
+end
+
+roomService -> roomDao: deleteById(roomId)
+activate roomDao
+roomDao --> roomService
+deactivate roomDao
+
+par #LightBlue
+    roomService -> kafka: /rooms-topic
+    note right roomService
+    messageKey: ROOM_DELETED
+    DeletedRoomDTO
+    {
+        UUID roomId,
+        UUID ownerId,
+        Set<UUID> participants
+    }
+    end note
+end
+
+roomService --> controller
+deactivate roomService
+
+controller --> a
+note left controller
+Http status: 204
+end note
+deactivate controller
+
+@enduml

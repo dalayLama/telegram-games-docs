@@ -1,0 +1,67 @@
+@startuml
+
+actor "Actor" as a #LightYellow
+participant "RoomController" as controller #LightGray
+participant "RoomService" as roomService #LightGray
+participant "RoomDAO" as roomDao #LightGray
+queue Kafka as kafka #LightPink
+
+a -> controller: POST /rooms
+note right a
+Request Header:
+"Authorization": "Bearer {token}"
+Request body
+{
+    @Nullable Integer maxParticipants,
+    @Nullable @Size(4) String roomCode,
+    @Nullable Set<UUID> participants
+}
+end note
+activate controller
+
+controller -> roomService: createRoom(newRoomRequest)
+note right controller
+NewRoomRequest
+{
+    @NotNull UUID ownerId,
+    @Nullable Integer maxParticipants,
+    @Nullable @Size(4) String roomCode,
+    @Nullable Set<UUID> participants
+}
+end note
+activate roomService
+
+roomService -> roomDao: save(Room)
+activate roomDao
+
+roomDao --> roomService: return Room
+deactivate roomDao
+
+par #AliceBlue
+    roomService -> kafka: /rooms-topic
+    note right roomService
+        messageKey: ROOM_CREATED
+        RoomDTO
+        {
+            UUID roomId,
+            UUID ownerId,
+            Integer maxParticipants,
+            Set<UUID> participants
+        }
+    end note
+end
+
+roomService -> controller: return Room
+deactivate roomService
+
+controller --> a: return Room ID
+note left controller
+Http status: 201
+Response body:
+{
+    UUID roomId
+}
+end note
+deactivate controller
+
+@enduml
