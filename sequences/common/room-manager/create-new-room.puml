@@ -41,7 +41,6 @@ par #AliceBlue
     roomService -> kafka: /rooms-topic
     note right roomService
         messageKey: ROOM_CREATED
-        RoomDTO
         {
             UUID roomId,
             UUID ownerId,
@@ -59,7 +58,10 @@ note left controller
 Http status: 201
 Response body:
 {
-    UUID roomId
+    UUID roomId,
+    UUID ownerId,
+    Integer maxParticipants,
+    Set<UUID> participants
 }
 end note
 deactivate controller
